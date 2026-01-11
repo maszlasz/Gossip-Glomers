@@ -1,4 +1,4 @@
-module Grow-Only-Counter
+module Kafka-Style-Log-B
 
 go 1.24.6
 
