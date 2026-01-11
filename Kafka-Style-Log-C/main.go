@@ -123,16 +123,10 @@ func (s *state) handleCommitOffsets(msg maelstrom.Message) error {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 1000*time.Millisecond)
 		defer cancel()
-		_, err := s.kv.Read(ctx, key)
+		err := s.kv.Write(ctx, key, offset)
 
-		if maelstrom.ErrorCode(err) == maelstrom.KeyDoesNotExist {
-			ctx, cancel = context.WithTimeout(context.Background(), 1000*time.Millisecond)
-			defer cancel()
-
-			err := s.kv.CompareAndSwap(ctx, key, nil, offset, true)
-			if err != nil && maelstrom.ErrorCode(err) != maelstrom.KeyDoesNotExist {
-				log.Println(err.Error())
-			}
+		if err != nil {
+			log.Println(err.Error())
 		}
 	}
 
@@ -155,7 +149,7 @@ func (s *state) handleListCommittedOffsets(msg maelstrom.Message) error {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 1000*time.Millisecond)
 		defer cancel()
-		offsetRaw, err := s.kv.Read(ctx, key + "_commited")
+		offsetRaw, err := s.kv.Read(ctx, key+"_commited")
 
 		if err == nil {
 			offset := offsetRaw.(int)
