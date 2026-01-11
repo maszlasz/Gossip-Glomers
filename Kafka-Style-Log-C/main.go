@@ -4,19 +4,23 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"sync"
 	"time"
 
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
 
 type state struct {
-	node *maelstrom.Node
-	kv   *maelstrom.KV
+	node          *maelstrom.Node
+	kv            *maelstrom.KV
+	offsetCache   map[string][]any
+	offsetCacheMx sync.Mutex
 }
 
 func main() {
 	s := state{
-		node: maelstrom.NewNode()}
+		node:        maelstrom.NewNode(),
+		offsetCache: make(map[string][]any)}
 	s.kv = maelstrom.NewLinKV(s.node)
 
 	s.node.Handle("send", s.handleSend)
@@ -38,33 +42,83 @@ func (s *state) handleSend(msg maelstrom.Message) error {
 	val := body["msg"].(float64)
 
 	var offset int
-	for {
-		ctx, cancel := context.WithTimeout(context.Background(), 1000*time.Millisecond)
+	isFromCacheSuccessful := false
+
+	// First, attempt to use the cached values for the given key and
+	// if it doesn't exist in the cache, then assume it also doesn't exist in kv.
+	s.offsetCacheMx.Lock()
+	valsOld, present := s.offsetCache[key]
+	s.offsetCacheMx.Unlock()
+
+	if present {
+		valsNew := append(valsOld, val)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
-		valsRaw, err := s.kv.Read(ctx, key)
+		err := s.kv.CompareAndSwap(ctx, key, valsOld, valsNew, false)
 
-		if maelstrom.ErrorCode(err) == maelstrom.KeyDoesNotExist {
-			valsNew := []float64{val}
+		if err == nil {
+			isFromCacheSuccessful = true
+			offset = len(valsOld)
 
-			ctx, cancel = context.WithTimeout(context.Background(), 1000*time.Millisecond)
+			s.offsetCacheMx.Lock()
+			s.offsetCache[key] = valsNew
+			s.offsetCacheMx.Unlock()
+		}
+	} else {
+		valsNew := []any{val}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		err := s.kv.CompareAndSwap(ctx, key, nil, valsNew, true)
+
+		if err == nil {
+			isFromCacheSuccessful = true
+			offset = 0
+
+			s.offsetCacheMx.Lock()
+			s.offsetCache[key] = valsNew
+			s.offsetCacheMx.Unlock()
+		}
+	}
+
+	// Then if CAS from cache fails, repeatedly make a read from kv and
+	// attempt another CAS until successful. Update the cache.
+	if !isFromCacheSuccessful {
+		var valsNew []any
+
+		for {
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 			defer cancel()
-			err := s.kv.CompareAndSwap(ctx, key, nil, valsNew, true)
-			if err == nil {
-				offset = 0
-				break
-			}
-		} else if err == nil {
-			valsOld := valsRaw.([]any)
-			valsNew := append(valsOld, val)
+			valsRaw, err := s.kv.Read(ctx, key)
 
-			ctx, cancel = context.WithTimeout(context.Background(), 1000*time.Millisecond)
-			defer cancel()
-			err := s.kv.CompareAndSwap(ctx, key, valsOld, valsNew, false)
-			if err == nil {
-				offset = len(valsOld)
-				break
+			if maelstrom.ErrorCode(err) == maelstrom.KeyDoesNotExist {
+				valsNew = []any{val}
+
+				ctx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
+				defer cancel()
+				err := s.kv.CompareAndSwap(ctx, key, nil, valsNew, true)
+				if err == nil {
+					offset = 0
+					break
+				}
+			} else if err == nil {
+				valsOld := valsRaw.([]any)
+				valsNew = append(valsOld, val)
+
+				ctx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
+				defer cancel()
+				err := s.kv.CompareAndSwap(ctx, key, valsOld, valsNew, false)
+				if err == nil {
+					offset = len(valsOld)
+					break
+				}
 			}
 		}
+
+		s.offsetCacheMx.Lock()
+		s.offsetCache[key] = valsNew
+		s.offsetCacheMx.Unlock()
 	}
 
 	replyBody := map[string]any{
@@ -84,13 +138,17 @@ func (s *state) handlePoll(msg maelstrom.Message) error {
 	for key, offsetRaw := range offsets {
 		offset := int(offsetRaw.(float64))
 
-		ctx, cancel := context.WithTimeout(context.Background(), 1000*time.Millisecond)
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 		valsRaw, err := s.kv.Read(ctx, key)
 
 		offsetMsgPairs := [][]float64{}
 		if err == nil {
 			vals := valsRaw.([]any)
+
+			s.offsetCacheMx.Lock()
+			s.offsetCache[key] = vals
+			s.offsetCacheMx.Unlock()
 
 			keyMsgs := vals[offset:]
 
@@ -118,12 +176,11 @@ func (s *state) handleCommitOffsets(msg maelstrom.Message) error {
 	offsets := body["offsets"].(map[string]any)
 
 	for key, offsetRaw := range offsets {
-		key += "_commited"
 		offset := int(offsetRaw.(float64))
 
-		ctx, cancel := context.WithTimeout(context.Background(), 1000*time.Millisecond)
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
-		err := s.kv.Write(ctx, key, offset)
+		err := s.kv.Write(ctx, key+"_commited", offset)
 
 		if err != nil {
 			log.Println(err.Error())
@@ -147,7 +204,7 @@ func (s *state) handleListCommittedOffsets(msg maelstrom.Message) error {
 	for _, keyRaw := range keys {
 		key := keyRaw.(string)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 1000*time.Millisecond)
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 		offsetRaw, err := s.kv.Read(ctx, key+"_commited")
 
