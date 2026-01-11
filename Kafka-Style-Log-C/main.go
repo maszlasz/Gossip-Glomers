@@ -50,36 +50,24 @@ func (s *state) handleSend(msg maelstrom.Message) error {
 	valsOld, present := s.offsetCache[key]
 	s.offsetCacheMx.Unlock()
 
+	var valsNew []any
 	if present {
-		valsNew := append(valsOld, val)
-
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-		defer cancel()
-		err := s.kv.CompareAndSwap(ctx, key, valsOld, valsNew, false)
-
-		if err == nil {
-			isFromCacheSuccessful = true
-			offset = len(valsOld)
-
-			s.offsetCacheMx.Lock()
-			s.offsetCache[key] = valsNew
-			s.offsetCacheMx.Unlock()
-		}
+		valsNew = append(valsOld, val)
 	} else {
-		valsNew := []any{val}
+		valsNew = []any{val}
+	}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-		defer cancel()
-		err := s.kv.CompareAndSwap(ctx, key, nil, valsNew, true)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	err := s.kv.CompareAndSwap(ctx, key, valsOld, valsNew, true)
 
-		if err == nil {
-			isFromCacheSuccessful = true
-			offset = 0
+	if err == nil {
+		isFromCacheSuccessful = true
+		offset = len(valsNew) - 1
 
-			s.offsetCacheMx.Lock()
-			s.offsetCache[key] = valsNew
-			s.offsetCacheMx.Unlock()
-		}
+		s.offsetCacheMx.Lock()
+		s.offsetCache[key] = valsNew
+		s.offsetCacheMx.Unlock()
 	}
 
 	// Then if CAS from cache fails, repeatedly make a read from kv and
