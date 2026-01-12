@@ -1,4 +1,4 @@
-module Broadcast-D
+module 2-Unique-Id-Generation
 
 go 1.24.6
 

@@ -1,4 +1,4 @@
-module Broadcast-A
+module 3D-Broadcast
 
 go 1.24.6
 

@@ -1,4 +1,4 @@
-module Kafka-Style-Log-C
+module 5C-Kafka-Style-Log
 
 go 1.24.6
 

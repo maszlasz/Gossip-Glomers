@@ -1,4 +1,4 @@
-module Broadcast-E
+module 3C-Broadcast
 
 go 1.24.6
 

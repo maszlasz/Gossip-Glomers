@@ -1,4 +1,4 @@
-module Grow-Only-Counter
+module 5B-Kafka-Style-Log
 
 go 1.24.6
 

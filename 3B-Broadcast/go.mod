@@ -1,4 +1,4 @@
-module Unique-Id-Generation
+module 3B-Broadcast
 
 go 1.24.6
 
