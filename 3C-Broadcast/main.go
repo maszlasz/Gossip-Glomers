@@ -49,9 +49,9 @@ func (s *state) handleBroadcast(msg maelstrom.Message) error {
 			if id != msg.Src {
 				go func() {
 					for {
+						ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(100*time.Millisecond))
+						defer cancel()
 						if _, err := s.node.SyncRPC(ctx, id, body); err == nil {
-							ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(100*time.Millisecond))
-							defer cancel()
 							break
 						}
 					}
