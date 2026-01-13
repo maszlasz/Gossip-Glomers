@@ -48,3 +48,9 @@ That allowed me to achieve the following results:
 - Messages-per-operation: ~8.5
 - Median latency: ~250ms
 - Maximum latency: ~390ms
+
+## Challenge #4: Grow-Only Counter 
+The goal is to create a distributed counter using a provided sequentially-consistent key/value storage.
+The nodes are supposed to handle *read*s which should return the current value of the counter and *add*, which increment the counter by the provided delta.
+For *add*s I'm using compare-and-swap (CAS) to ensure the counter is properly incremented. The first CAS is based on a local cache to reduce the average number of exchanged messages per operation. If it fails, then the node repeatedly keeps reading the counter and attempting CAS until success, updating the cache in the end. Naturally, *read* also updates the cache.
+The *read* has to write to a different key in the storage before actually reading the counter value, so as to ensure that the final *read* (which is what mostly matters here), is not reordored before any CASes of other nodes and actually returns the final recorded value.
