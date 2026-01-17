@@ -55,3 +55,17 @@ The nodes are supposed to handle *read*s which should return the current value o
 
 For *add*s I'm using compare-and-swap (CAS) to ensure the counter is properly incremented. The first CAS is based on a local cache to reduce the average number of exchanged messages per operation. If it fails, then the node repeatedly keeps reading the counter and attempting CAS until success, updating the cache in the end. Naturally, *read* also updates the cache.
 The *read* has to write to a different key in the storage before actually reading the counter value, so as to ensure that the final *read* (which is what mostly matters here), is not reordored before any CASes of other nodes and actually returns the final recorded value.
+
+## Challenge #5a: Single-Node Kafka-Style Log 
+Here we're simply preparing the setup for further challenges.
+Each value under a key received via *send* is supposed to have an offset assigned to it, that's unique per key. The log is stored locally together with a mutex.
+*poll* comes with key-offset pairs - for each key we're supposed to return all offset-value pairs starting from the given offset.
+With *commit_offsets* all the given keys are supposed to be considered up to the given offsets. Committed offsets are stored separately with a mutex. *list_committed_offsets* lists committed offsets for each given key.
+
+## Challenge #5b: Multi-Node Kafka-Style Log 
+We have to transition to a setup, where the local storage of both keys-values-offsets and committed offsets is moved to a shared, linearizable storage. CASes are used for *send* and *commit_offsets*. The average messages per operation ended up at 7.4.
+
+## Challenge #5c: Efficient Kafka-Style Log
+Here we try to improved 5b as much as we can.
+In 5C1 I've tried playing around with a local cache for the log, since the storage is supposed to be distributed only among two nodes and there was a minor improvement down to an average of 7.3.
+In 5C2 I've used consistent 'hashing' of keys (which can be easily done via modulo, since the keys are just integers) and distributed them among the nodes. That allowed me to replace the CASes with writes and decrease messages per operation down to an average of 6.8.
