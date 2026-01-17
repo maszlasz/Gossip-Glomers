@@ -1,4 +1,4 @@
-module 5C-Kafka-Style-Log
+module 5C2-Kafka-Style-Log
 
 go 1.24.6
 
